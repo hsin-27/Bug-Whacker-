@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>打擊蟲蟲！Bug Whacker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DotGothic16&family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --font: 'Press Start 2P', 'DotGothic16', monospace;
+    --ink: #1a1008;
+    --paper: #fff4c9;
+    --grass: none; /* 由 JavaScript 程式生成像素草地後填入 */
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font);
+    color: var(--ink);
+    line-height: 1.7;
+    background-color: #2e6b2d;
+    background-image: var(--grass);
+    background-size: 256px 256px;       /* 64px 圖塊放大 4 倍 */
+    image-rendering: pixelated;
+    overflow-x: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: manipulation;
+  }
+
+  /* ---------- 最後 5 秒紅色警告（純 CSS transition + @keyframes） ---------- */
+  #dangerLayer, #dangerFlash {
+    position: fixed; inset: 0; pointer-events: none; z-index: 1;
+  }
+  #dangerLayer {
+    background: #e01818;
+    opacity: 0;
+    transition: opacity .3s linear;
+  }
+  body.danger #dangerLayer {
+    opacity: .55;
+    transition: opacity 5s linear;       /* 5 秒內平滑染紅 */
+  }
+  #dangerFlash { background: #ff0000; opacity: 0; }
+  body.danger #dangerFlash { animation: redFlash .7s steps(2, end) infinite; }
+  @keyframes redFlash {
+    0%   { opacity: 0; }
+    50%  { opacity: .22; }
+    100% { opacity: 0; }
+  }
+
+  /* ---------- 畫面切換 ---------- */
+  .screen {
+    position: relative; z-index: 2;
+    min-height: 100vh; min-height: 100dvh;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    gap: 22px;
+  }
+  #startScreen { display: flex; }
+  #gameScreen { padding-top: 78px; }   /* 幫左上角選單按鈕留空間 */
+
+  /* ---------- 標題 ---------- */
+  .title {
+    font-size: clamp(26px, 8vw, 64px);
+    color: #fff;
+    text-align: center;
+    letter-spacing: 2px;
+    text-shadow:
+      4px 0 0 var(--ink), -4px 0 0 var(--ink), 0 4px 0 var(--ink), 0 -4px 0 var(--ink),
+      4px 4px 0 var(--ink), -4px 4px 0 var(--ink), 4px -4px 0 var(--ink), -4px -4px 0 var(--ink),
+      8px 8px 0 rgba(0,0,0,.45);
+    animation: floaty 2s ease-in-out infinite;
+  }
+  .title .bugicon { display: block; font-size: 1.1em; margin-bottom: 6px; }
+  @keyframes floaty {
+    0%, 100% { transform: translateY(-10px); }
+    50%      { transform: translateY(10px); }
+  }
+
+  /* ---------- 像素按鈕與面板 ---------- */
+  .btn {
+    font-family: var(--font);
+    font-size: clamp(14px, 3.6vw, 20px);
+    color: var(--ink);
+    background: #ffd23f;
+    border: 4px solid var(--ink);
+    padding: 14px 22px;
+    cursor: pointer;
+    box-shadow: 4px 4px 0 var(--ink);
+    transition: transform .06s, box-shadow .06s, background .1s;
+  }
+  .btn:hover { background: #ffe27a; }
+  .btn:active { transform: translate(2px, 2px); box-shadow: 2px 2px 0 var(--ink); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.green { background: #7bd34a; }
+  .btn.green:hover { background: #9be46f; }
+  .btn.blue { background: #6ec6ff; }
+  .btn.blue:hover { background: #a2dcff; }
+  .btn.red { background: #ff8a7a; }
+  .btn.red:hover { background: #ffaa9d; }
+  .btn-col { display: flex; flex-direction: column; gap: 16px; align-items: stretch; min-width: min(78vw, 280px); }
+  .btn-col .btn { text-align: center; }
+
+  .panel {
+    background: var(--paper);
+    border: 4px solid var(--ink);
+    box-shadow: 6px 6px 0 var(--ink);
+    padding: 20px;
+    width: min(92vw, 460px);
+  }
+  .badge {
+    background: var(--paper);
+    border: 4px solid var(--ink);
+    box-shadow: 4px 4px 0 var(--ink);
+    padding: 8px 14px;
+    font-size: clamp(11px, 2.8vw, 14px);
+    transition: background .1s;
+  }
+  .badge.minus { background: #ff7b7b; }
+
+  /* ---------- 左上角三條槓選單 ---------- */
+  .menu-btn {
+    position: absolute; top: 14px; left: 14px; z-index: 6;
+    width: 54px; height: 54px; padding: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  }
+  .menu-btn span { display: block; width: 26px; height: 4px; background: var(--ink); }
+  #menuPanel {
+    display: none; position: absolute; top: 78px; left: 14px; z-index: 6;
+    flex-direction: column; gap: 12px;
+    width: min(72vw, 250px);
+    padding: 14px;
+    background: var(--paper);
+    border: 4px solid var(--ink);
+    box-shadow: 6px 6px 0 var(--ink);
+  }
+  #menuPanel .btn { font-size: clamp(12px, 3.2vw, 15px); padding: 12px 10px; text-align: center; }
+
+  /* ---------- 遊戲畫面 ---------- */
+  .hud {
+    display: flex; flex-wrap: wrap; justify-content: center;
+    gap: 12px; width: min(94vw, 480px);
+  }
+  .hud .badge b { color: #c0281c; }
+  .board-wrap { position: relative; width: min(92vw, 460px); }
+  .board-wrap.shake { animation: shake .3s steps(4, end); }
+  @keyframes shake {
+    0%   { transform: translate(0, 0); }
+    25%  { transform: translate(-7px, 3px); }
+    50%  { transform: translate(7px, -3px); }
+    75%  { transform: translate(-4px, -2px); }
+    100% { transform: translate(0, 0); }
+  }
+  .board {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: clamp(6px, 2vw, 12px);
+    padding: clamp(8px, 2.4vw, 14px);
+    background: rgba(26, 16, 8, .55);
+    border: 4px solid var(--ink);
+    box-shadow: 6px 6px 0 var(--ink);
+  }
+  .hole {
+    position: relative;
+    aspect-ratio: 1 / 1;
+    background: #5a3418;
+    border: 4px solid var(--ink);
+    box-shadow: inset 0 8px 0 #3a200e, inset 0 -4px 0 #6f4524;
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    cursor: crosshair;
+  }
+  .hole.bomb { background: #4a2020; }
+  .hole.hit.bomb-hit { background: #b81c1c; }
+  .hole .bug {
+    display: none;
+    font-size: clamp(26px, 9vw, 54px);
+    line-height: 1;
+    filter: drop-shadow(3px 3px 0 rgba(0,0,0,.55));
+    pointer-events: none;
+  }
+  .hole.up .bug { display: block; animation: popUp .12s steps(3, end); }
+  .hole.hit .bug { display: block; animation: boom .3s steps(3, end); }
+  @keyframes popUp {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+  }
+  @keyframes boom {
+    0%   { transform: scale(.5); }
+    60%  { transform: scale(1.25); }
+    100% { transform: scale(1); }
+  }
+  .hint { font-size: clamp(10px, 2.6vw, 13px); color: #fff; text-shadow: 2px 2px 0 var(--ink); text-align: center; }
+
+  /* ---------- 倒數 / 暫停覆蓋層 ---------- */
+  .overlay {
+    display: none; position: absolute; inset: 0; z-index: 4;
+    flex-direction: column; align-items: center; justify-content: center;
+    background: rgba(26, 16, 8, .72);
+    border: 4px solid var(--ink);
+    pointer-events: none;
+    color: #fff;
+  }
+  .overlay .ov-main {
+    font-size: clamp(56px, 22vw, 120px);
+    text-shadow: 6px 6px 0 var(--ink);
+    animation: numPop .4s steps(4, end);
+  }
+  .overlay.small .ov-main { font-size: clamp(22px, 7vw, 36px); }
+  .overlay .ov-sub {
+    margin-top: 16px; padding: 0 16px; text-align: center;
+    font-size: clamp(10px, 2.8vw, 13px); line-height: 1.9;
+  }
+  @keyframes numPop {
+    0%   { transform: scale(1.8); opacity: 0; }
+    100% { transform: scale(1);   opacity: 1; }
+  }
+
+  /* ---------- 結算 ---------- */
+  .result-title { font-size: clamp(18px, 5vw, 28px); text-align: center; margin-bottom: 14px; }
+  .result-row { display: flex; justify-content: space-between; font-size: clamp(12px, 3.2vw, 16px); padding: 8px 0; border-bottom: 3px dashed #b9a36a; }
+  .result-row b { color: #c0281c; }
+  #newRecord {
+    display: none; text-align: center; margin: 14px 0 4px;
+    font-size: clamp(16px, 4.4vw, 24px); color: #e01818;
+    animation: blink .5s steps(2, end) infinite;
+  }
+  @keyframes blink { 0% { opacity: 1; } 100% { opacity: .15; } }
+
+  /* ---------- 規則視窗 ---------- */
+  #rulesModal {
+    display: none; position: fixed; inset: 0; z-index: 10;
+    background: rgba(0, 0, 0, .65);
+    align-items: center; justify-content: center; padding: 16px;
+  }
+  #rulesModal .panel { max-height: 90vh; overflow-y: auto; }
+  #rulesModal h2 { font-size: clamp(16px, 4.4vw, 22px); text-align: center; margin-bottom: 12px; }
+  #rulesModal ul { list-style: none; font-size: clamp(11px, 2.9vw, 14px); display: grid; gap: 10px; margin-bottom: 18px; }
+  #rulesModal li::before { content: "▶ "; color: #c0281c; }
+  #rulesModal .btn { width: 100%; }
+</style>
+</head>
+<body>
+<div id="dangerLayer"></div>
+<div id="dangerFlash"></div>
+
+<!-- 初始歡迎頁 -->
+<section id="startScreen" class="screen">
+  <h1 class="title"><span class="bugicon">🐛</span>打擊蟲蟲！</h1>
+  <div class="badge">歷史最高分：<b id="startHigh">0</b></div>
+  <div class="btn-col">
+    <button class="btn green" id="btnStart">開始遊戲</button>
+    <button class="btn blue" id="btnRules">規則說明</button>
+  </div>
+</section>
+
+<!-- 遊戲畫面 -->
+<section id="gameScreen" class="screen">
+  <button class="btn menu-btn" id="menuBtn" aria-label="選單"><span></span><span></span><span></span></button>
+  <div id="menuPanel">
+    <button class="btn" id="btnPause">暫停遊戲</button>
+    <button class="btn green" id="btnRestart">重新開始</button>
+    <button class="btn blue" id="btnMenuHome">回首頁</button>
+  </div>
+
+  <div class="hud">
+    <div class="badge">時間 <b id="timeLeft">30</b></div>
+    <div class="badge" id="scoreBadge">分數 <b id="score">0</b></div>
+    <div class="badge">最高 <b id="gameHigh">0</b></div>
+  </div>
+  <div class="board-wrap" id="boardWrap">
+    <div class="board" id="board"></div>
+    <div class="overlay" id="boardOverlay"></div>
+  </div>
+  <p class="hint">點蟲蟲 🐛 +1，別點到炸彈 💣 −2！</p>
+</section>
+
+<!-- 結算頁 -->
+<section id="resultScreen" class="screen">
+  <div class="panel">
+    <h2 class="result-title">時間到！</h2>
+    <div class="result-row"><span>本次得分</span><b id="finalScore">0</b></div>
+    <div class="result-row"><span>打中蟲蟲</span><b id="finalBugs">0</b></div>
+    <div class="result-row"><span>踩到炸彈</span><b id="finalBombs">0</b></div>
+    <div class="result-row"><span>歷史最高分</span><b id="finalHigh">0</b></div>
+    <div id="newRecord">New Record!</div>
+  </div>
+  <div class="btn-col">
+    <button class="btn green" id="btnAgain">再玩一次</button>
+    <button class="btn blue" id="btnHome">回首頁</button>
+  </div>
+</section>
+
+<!-- 規則說明視窗 -->
+<div id="rulesModal">
+  <div class="panel">
+    <h2>規則說明</h2>
+    <ul>
+      <li>按下開始後有 3 秒倒數，讓你先做好準備。</li>
+      <li>遊戲時間 30 秒，蟲蟲會從 16 個洞穴中隨機冒出，用滑鼠或手指點擊牠！</li>
+      <li>打中蟲蟲 +1 分。</li>
+      <li>小心！偶爾會冒出炸彈，點到炸彈會扣 2 分（分數最低為 0）。炸彈不點就不會扣分。</li>
+      <li>越到後面，蟲蟲出現得越快、停留得越短。</li>
+      <li>最後 5 秒畫面會漸漸變紅，加油！</li>
+      <li>遊戲中點左上角三條槓選單，可以暫停、重新開始或回首頁。</li>
+      <li>最高分會存在瀏覽器裡，重新整理也不會消失。</li>
+    </ul>
+    <button class="btn" id="btnCloseRules">關閉</button>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   1. 程式生成像素草地（可無縫重複的 64x64 圖塊）
+   ========================================================= */
+function makeGrassTile() {
+  const N = 64;
+  const c = document.createElement('canvas');
+  c.width = c.height = N;
+  const ctx = c.getContext('2d');
+
+  // 固定種子的亂數，讓每次生成的草地都一樣
+  let seed = 20261019;
+  function rnd() {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  const pick = arr => arr[Math.floor(rnd() * arr.length)];
+
+  // 用取餘數的方式畫點，邊緣會繞回另一邊 → 圖塊可無縫拼接
+  function px(x, y, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(((x % N) + N) % N, ((y % N) + N) % N, 1, 1);
+  }
+
+  // 深綠底色
+  ctx.fillStyle = '#2f6e2e';
+  ctx.fillRect(0, 0, N, N);
+
+  // 葉片：由小方塊組成的不規則形狀
+  const shapes = [
+    [[0,0],[1,0],[2,0],[0,1],[1,1],[2,1],[1,2]],
+    [[1,0],[0,1],[1,1],[2,1],[0,2],[1,2]],
+    [[0,0],[1,0],[1,1],[2,1],[2,2],[3,2]],
+    [[1,0],[2,0],[0,1],[1,1],[2,1],[3,1],[1,2],[2,2]],
+    [[0,0],[1,0],[0,1],[1,1],[2,1],[1,2],[2,2]]
+  ];
+  const greens = [
+    { body: '#3f8d36', light: '#58a832' },
+    { body: '#58a832', light: '#8fcf3a' },
+    { body: '#8fcf3a', light: '#b8e24c' },
+    { body: '#27582a', light: '#3f8d36' }
+  ];
+  for (let i = 0; i < 300; i++) {
+    const s = pick(shapes);
+    const g = pick(greens);
+    const ox = Math.floor(rnd() * N);
+    const oy = Math.floor(rnd() * N);
+    s.forEach(([dx, dy]) => px(ox + dx, oy + dy, g.body));
+    px(ox + s[0][0], oy + s[0][1], g.light); // 左上角的亮點
+  }
+
+  // 花朵：白色花瓣 + 紅色花蕊，並避免彼此太靠近
+  const flowers = [];
+  let tries = 0;
+  while (flowers.length < 11 && tries < 500) {
+    tries++;
+    const x = Math.floor(rnd() * N);
+    const y = Math.floor(rnd() * N);
+    const ok = flowers.every(f => {
+      const dx = Math.min(Math.abs(f.x - x), N - Math.abs(f.x - x));
+      const dy = Math.min(Math.abs(f.y - y), N - Math.abs(f.y - y));
+      return dx * dx + dy * dy > 144; // 距離至少 12 格
+    });
+    if (ok) flowers.push({ x, y });
+  }
+  const petal = '#e6f8f4', petalShade = '#bfe6df', core = '#e8422a';
+  flowers.forEach(({ x, y }) => {
+    [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([dx, dy]) => px(x + dx, y + dy, petalShade));
+    [[-1,0],[1,0],[0,-1],[0,1],[-2,0],[2,0],[0,-2],[0,2]].forEach(([dx, dy]) => px(x + dx, y + dy, petal));
+    px(x, y, core);
+  });
+
+  // 小碎花（白點 + 紅點）
+  for (let i = 0; i < 22; i++) {
+    const x = Math.floor(rnd() * N), y = Math.floor(rnd() * N);
+    px(x, y, '#f4fffb');
+    if (i % 3 === 0) px(x + 1, y + 1, '#e8422a');
+  }
+  return c.toDataURL('image/png');
+}
+document.documentElement.style.setProperty('--grass', 'url(' + makeGrassTile() + ')');
+
+/* =========================================================
+   2. 元素、常數與狀態
+   ========================================================= */
+const $ = id => document.getElementById(id);
+const screens = { start: $('startScreen'), game: $('gameScreen'), result: $('resultScreen') };
+const boardEl = $('board');
+const boardWrap = $('boardWrap');
+const overlayEl = $('boardOverlay');
+
+const GAME_SECONDS = 30;
+const COUNTDOWN_SECONDS = 3;   // 開局 / 繼續前的準備倒數
+const BOMB_CHANCE = 0.2;       // 每次生成時出現炸彈的機率
+const BOMB_PENALTY = 2;        // 點到炸彈扣幾分（分數最低 0）
+const MAX_BUGS = 2;            // 同時最多幾個目標
+const STORAGE_KEY = 'bugWhackerHighScore';
+
+// 三階段難度：剩餘時間越少，出現越快、停留越短
+const STAGES = [
+  { minTime: 21, interval: 900, stay: 1000 },
+  { minTime: 11, interval: 700, stay: 800 },
+  { minTime: 0,  interval: 500, stay: 600 }
+];
+
+// state：idle（不在遊戲中）/ countdown（準備倒數）/ playing / paused
+let state = 'idle';
+let score = 0, timeLeft = GAME_SECONDS, bugsHit = 0, bombsHit = 0;
+let countdownTimer = null, spawnTimer = null, cdTimer = null, goTimer = null;
+const holes = [];   // { el, up, hit, type, hideTimer, hitTimer }
+
+/* ---------- 最高分（localStorage，包 try/catch） ---------- */
+function loadHigh() {
+  try { return parseInt(localStorage.getItem(STORAGE_KEY), 10) || 0; }
+  catch (e) { return 0; }
+}
+function saveHigh(v) {
+  try { localStorage.setItem(STORAGE_KEY, String(v)); } catch (e) {}
+}
+let highScore = loadHigh();
+function refreshHighUI() {
+  $('startHigh').textContent = highScore;
+  $('gameHigh').textContent = highScore;
+}
+
+/* ---------- 畫面切換（操作 display） ---------- */
+function showScreen(name) {
+  Object.keys(screens).forEach(k => {
+    screens[k].style.display = (k === name) ? 'flex' : 'none';
+  });
+}
+
+/* =========================================================
+   3. 建立 4x4 洞穴
+   ========================================================= */
+for (let i = 0; i < 16; i++) {
+  const el = document.createElement('div');
+  el.className = 'hole';
+  el.innerHTML = '<span class="bug"></span>';
+  const h = { el, up: false, hit: false, type: null, hideTimer: null, hitTimer: null };
+  el.addEventListener('pointerdown', e => { e.preventDefault(); whack(h); });
+  boardEl.appendChild(el);
+  holes.push(h);
+}
+
+function clearHole(h) {
+  clearTimeout(h.hideTimer);
+  clearTimeout(h.hitTimer);
+  h.up = false;
+  h.hit = false;
+  h.type = null;
+  h.el.classList.remove('up', 'hit', 'bomb', 'bomb-hit');
+}
+
+/* =========================================================
+   4. 覆蓋層（倒數 / 暫停）與選單
+   ========================================================= */
+function showOverlay(main, sub) {
+  clearTimeout(goTimer); goTimer = null;
+  overlayEl.className = 'overlay' + (sub ? ' small' : '');
+  overlayEl.innerHTML = '<div class="ov-main"></div>' + (sub ? '<div class="ov-sub"></div>' : '');
+  overlayEl.querySelector('.ov-main').textContent = main;
+  if (sub) overlayEl.querySelector('.ov-sub').textContent = sub;
+  overlayEl.style.display = 'flex';
+}
+function hideOverlay() {
+  clearTimeout(goTimer); goTimer = null;
+  overlayEl.style.display = 'none';
+}
+
+const menuBtn = $('menuBtn'), menuPanel = $('menuPanel'), pauseBtn = $('btnPause');
+let menuOpen = false;
+function setMenu(open) {
+  menuOpen = open;
+  menuPanel.style.display = open ? 'flex' : 'none';
+}
+function updatePauseBtn() {
+  pauseBtn.textContent = (state === 'paused') ? '繼續遊戲' : '暫停遊戲';
+  pauseBtn.disabled = (state === 'countdown');   // 準備倒數時不能按
+}
+
+/* =========================================================
+   5. 遊戲邏輯
+   ========================================================= */
+function currentStage() {
+  return STAGES.find(s => timeLeft >= s.minTime) || STAGES[STAGES.length - 1];
+}
+
+function spawnTarget() {
+  if (state !== 'playing') return;
+  if (holes.filter(h => h.up).length >= MAX_BUGS) return;
+  const free = holes.filter(h => !h.up && !h.hit);
+  if (!free.length) return;
+  const h = free[Math.floor(Math.random() * free.length)];
+
+  // 同一時間最多一顆炸彈
+  const bombOnBoard = holes.some(x => x.up && x.type === 'bomb');
+  const isBomb = !bombOnBoard && Math.random() < BOMB_CHANCE;
+
+  h.up = true;
+  h.type = isBomb ? 'bomb' : 'bug';
+  h.el.querySelector('.bug').textContent = isBomb ? '💣' : '🐛';
+  h.el.classList.add('up');
+  if (isBomb) h.el.classList.add('bomb');
+  // 停留時間到了還沒被點 → 自動消失（無懲罰）
+  h.hideTimer = setTimeout(() => clearHole(h), currentStage().stay);
+}
+
+function scheduleSpawn() {
+  spawnTimer = setTimeout(() => {
+    spawnTarget();
+    if (state === 'playing') scheduleSpawn();
+  }, currentStage().interval);
+}
+
+function flashClass(el, cls, ms) {
+  el.classList.add(cls);
+  setTimeout(() => el.classList.remove(cls), ms);
+}
+
+function whack(h) {
+  if (state !== 'playing' || !h.up) return;   // 空洞不扣分；同一個目標不能重複計分
+  clearTimeout(h.hideTimer);
+  const wasBomb = (h.type === 'bomb');
+  h.up = false;
+  h.hit = true;
+  h.el.classList.remove('up', 'bomb');
+  h.el.classList.add('hit');
+  h.el.querySelector('.bug').textContent = '💥';
+
+  if (wasBomb) {
+    bombsHit++;
+    score = Math.max(0, score - BOMB_PENALTY);
+    h.el.classList.add('bomb-hit');
+    flashClass($('scoreBadge'), 'minus', 400);
+    flashClass(boardWrap, 'shake', 300);
+  } else {
+    bugsHit++;
+    score++;
+  }
+  $('score').textContent = score;
+  h.hitTimer = setTimeout(() => clearHole(h), 300);
+}
+
+function stopAll() {
+  clearInterval(countdownTimer);
+  clearTimeout(spawnTimer);
+  clearInterval(cdTimer);
+  countdownTimer = spawnTimer = cdTimer = null;
+  hideOverlay();
+}
+
+function tick() {
+  timeLeft--;
+  $('timeLeft').textContent = timeLeft;
+  if (timeLeft === 5) document.body.classList.add('danger'); // 最後 5 秒警告
+  if (timeLeft <= 0) endGame();
+}
+
+function beginPlaying() {
+  state = 'playing';
+  updatePauseBtn();
+  countdownTimer = setInterval(tick, 1000);
+  scheduleSpawn();
+}
+
+// 3、2、1 準備倒數，結束後執行 done（開局與暫停後繼續都會用到）
+function runCountdown(done) {
+  state = 'countdown';
+  updatePauseBtn();
+  let n = COUNTDOWN_SECONDS;
+  showOverlay(String(n));
+  cdTimer = setInterval(() => {
+    n--;
+    if (n > 0) { showOverlay(String(n)); return; }
+    clearInterval(cdTimer); cdTimer = null;
+    done();
+    showOverlay('GO!');
+    goTimer = setTimeout(hideOverlay, 600);
+  }, 1000);
+}
+
+function startGame() {
+  stopAll();                          // 避免重新開始時計時器重複疊加
+  holes.forEach(clearHole);
+  document.body.classList.remove('danger');
+  setMenu(false);
+  score = 0; bugsHit = 0; bombsHit = 0;
+  timeLeft = GAME_SECONDS;
+  $('score').textContent = 0;
+  $('timeLeft').textContent = timeLeft;
+  refreshHighUI();
+  showScreen('game');
+  runCountdown(beginPlaying);
+}
+
+function pauseGame() {
+  if (state !== 'playing') return;
+  state = 'paused';
+  clearInterval(countdownTimer);
+  clearTimeout(spawnTimer);
+  countdownTimer = spawnTimer = null;
+  holes.forEach(clearHole);           // 暫停時蟲蟲和炸彈都收起來，避免偷看
+  showOverlay('暫停中', '點左上角選單的「繼續遊戲」，會先倒數 3 秒再開始');
+  updatePauseBtn();
+}
+
+function resumeGame() {
+  if (state !== 'paused') return;
+  hideOverlay();
+  runCountdown(beginPlaying);
+}
+
+function endGame() {
+  state = 'idle';
+  stopAll();
+  holes.forEach(clearHole);
+  setMenu(false);
+  document.body.classList.remove('danger');
+
+  const isRecord = score > highScore;
+  if (isRecord) { highScore = score; saveHigh(highScore); }
+  refreshHighUI();
+  $('finalScore').textContent = score;
+  $('finalBugs').textContent = bugsHit;
+  $('finalBombs').textContent = bombsHit;
+  $('finalHigh').textContent = highScore;
+  $('newRecord').style.display = isRecord ? 'block' : 'none';
+  showScreen('result');
+}
+
+function goHome() {
+  state = 'idle';
+  stopAll();
+  holes.forEach(clearHole);
+  setMenu(false);
+  document.body.classList.remove('danger');
+  refreshHighUI();
+  showScreen('start');
+}
+
+/* =========================================================
+   6. 按鈕事件
+   ========================================================= */
+$('btnStart').addEventListener('click', startGame);
+$('btnAgain').addEventListener('click', startGame);
+$('btnHome').addEventListener('click', goHome);
+
+menuBtn.addEventListener('click', () => setMenu(!menuOpen));
+pauseBtn.addEventListener('click', () => {
+  setMenu(false);
+  if (state === 'playing') pauseGame();
+  else if (state === 'paused') resumeGame();
+});
+$('btnRestart').addEventListener('click', startGame);
+$('btnMenuHome').addEventListener('click', goHome);
+// 點選單以外的地方就收起選單
+document.addEventListener('pointerdown', e => {
+  if (menuOpen && !menuPanel.contains(e.target) && !menuBtn.contains(e.target)) setMenu(false);
+});
+
+const rulesModal = $('rulesModal');
+$('btnRules').addEventListener('click', () => { rulesModal.style.display = 'flex'; });
+$('btnCloseRules').addEventListener('click', () => { rulesModal.style.display = 'none'; });
+rulesModal.addEventListener('pointerdown', e => {
+  if (e.target === rulesModal) rulesModal.style.display = 'none'; // 點遮罩關閉
+});
+
+// 初始化
+refreshHighUI();
+updatePauseBtn();
+showScreen('start');
+</script>
+</body>
+</html>
